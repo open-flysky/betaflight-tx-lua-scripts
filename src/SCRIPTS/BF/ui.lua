@@ -6,6 +6,7 @@ local pageStatus =
     editing     = 3,
     saving      = 4,
     displayMenu = 5,
+    close       = 6,
 }
 
 local uiMsp =
@@ -73,19 +74,27 @@ end
 local function eepromWrite()
     protocol.mspRead(uiMsp.eepromWrite)
 end
+local function exitScript()
+    Page = nil
+    currentState = pageStatus.close
+end
 
 local menuList = {
     {
-        t = "save page",
+        t = "Save page",
         f = saveSettings
     },
     {
-        t = "reload",
+        t = "Reload",
         f = invalidatePages
     },
     {
-        t = "reboot",
+        t = "Reboot",
         f = rebootFc
+    },
+    {
+        t = "Exit",
+        f = exitScript
     }
 }
 
@@ -170,10 +179,33 @@ function drawScreenTitle(screen_title)
         lcd.drawText(1,1,screen_title,INVERS)
     else
         lcd.drawFilledRectangle(0, 0, LCD_W, 30, TITLE_BGCOLOR)
-        lcd.drawText(5,5,screen_title, MENU_TITLE_COLOR)
+        lcd.drawFilledRectangle(5, 5, 20, 3, MENU_TITLE_COLOR)
+        lcd.drawFilledRectangle(5, 13, 20, 3, MENU_TITLE_COLOR)
+        lcd.drawFilledRectangle(5, 21, 20, 3, MENU_TITLE_COLOR)
+        lcd.drawText(35,5,screen_title, MENU_TITLE_COLOR)
     end
 end
 
+local function getField(x, y)
+    for i=1,#(Page.fields) do
+        local f = Page.fields[i]
+        local x_min = f.x - 2;
+        local y_min = f.y - 2;
+        local val = "---"
+        if f.t ~= nil then
+            val = f.t
+        end
+        local h = lcd.getHeight(val, (f.to or 0))
+        local w = lcd.getWidth(val, (f.to or 0))
+        local y_max = f.y + h
+        local x_max = f.x + w
+        
+        if ( x >= x_min) and (y >= y_min) and (x <= x_max) and (y <= y_max) then
+            return i
+        end
+    end
+    return -1
+end
 local function drawScreen()
     local yMinLim = Page.yMinLimit or 0
     local yMaxLim = Page.yMaxLimit or LCD_H
@@ -259,6 +291,24 @@ local function incValue(inc)
         f.upd(Page)
     end
 end
+local function setValue(value)
+    local f = Page.fields[currentLine]
+    local idx = f.i or currentLine
+    local scale = (f.scale or 1)
+    if(value < f.min) then
+        value = f.min
+    end
+    if(value > f.max) then
+        value = f.max
+    end
+    f.value = value
+    for idx=1, #(f.vals) do
+        Page.values[f.vals[idx]] = bit32.rshift(math.floor(f.value*scale + 0.5), (idx-1)*8)
+    end
+    if f.upd and Page.values then
+        f.upd(Page)
+    end
+end
 
 local function drawMenu()
     local x = MenuBox.x
@@ -267,11 +317,12 @@ local function drawMenu()
     local h_line = MenuBox.h_line
     local h_offset = MenuBox.h_offset
     local h = #(menuList) * h_line + h_offset*2
-
-    lcd.drawFilledRectangle(x,y,w,h,backgroundFill)
-    lcd.drawRectangle(x,y,w-1,h-1,foregroundColor)
-    lcd.drawText(x+h_line/2,y+h_offset,"Menu:",globalTextOptions)
-
+    
+    lcd.drawFilledRectangle(x,y,w,h,foregroundColor)
+    lcd.drawFilledRectangle(x+1,y+1,w-2,h-2,backgroundFill)
+    if MenuBox.x_offset > h_offset then
+        lcd.drawText(x+h_line/2,y+h_offset,"Menu:",globalTextOptions)
+    end
     for i,e in ipairs(menuList) do
         local text_options = globalTextOptions
         if menuActive == i then
@@ -280,8 +331,28 @@ local function drawMenu()
         lcd.drawText(x+MenuBox.x_offset,y+(i-1)*h_line+h_offset,e.t,text_options)
     end
 end
+local function getMenuIndex(event_x, event_y)
+    local x = MenuBox.x
+    local y = MenuBox.y
+    local w = MenuBox.w
+    local h_line = MenuBox.h_line
+    local h_offset = MenuBox.h_offset
+    local h = #(menuList) * h_line + h_offset*2
+	for i,e in ipairs(menuList) do
+        local x_min = x+MenuBox.x_offset - 2;
+        local y_min = y+(i-1)*h_line+h_offset - 2;
+        local h = lcd.getHeight(e.t, globalTextOptions)
+        local w = lcd.getWidth(e.t, globalTextOptions)
+        local x_max = x_min + 2 + w
+        local y_max = y_min + 2 + h
+        if ( event_x >= x_min) and (event_y >= y_min) and (event_x <= x_max) and (event_y <= y_max) then
+            return math.floor(i)
+        end
+    end
+    return -1
+end
 
-function run_ui(event)
+function run_ui(event, wParam, lParam)
     local now = getTime()
     -- if lastRunTS old than 500ms
     if lastRunTS + 50 < now then
@@ -302,7 +373,7 @@ function run_ui(event)
     -- process send queue
     mspProcessTxQ()
     -- navigation
-    if (event == userEvent.longPress.menu) then -- Taranis QX7 / X9
+    if (event == userEvent.longPress.menu) or (event == userEvent.touch.up and wParam < 30 and lParam < 30) then -- Taranis QX7 / X9
         menuActive = 1
         currentState = pageStatus.displayMenu
     elseif userEvent.press.pageDown and (event == userEvent.longPress.enter) then -- Horus
@@ -311,12 +382,18 @@ function run_ui(event)
         currentState = pageStatus.displayMenu
     -- menu is currently displayed
     elseif currentState == pageStatus.displayMenu then
-        if event == userEvent.release.exit then
+        if event == userEvent.release.exit or event == userEvent.touch.slideRight then
             currentState = pageStatus.display
         elseif event == userEvent.release.plus or event == userEvent.dial.left then
             incMenu(-1)
         elseif event == userEvent.release.minus or event == userEvent.dial.right then
             incMenu(1)
+        elseif event == userEvent.touch.up then
+            local idx = getMenuIndex(wParam, lParam)
+            if (idx ~= -1) then
+                currentState = pageStatus.display
+                menuList[idx].f()
+            end
         elseif event == userEvent.release.enter then
             if killEnterBreak == 1 then
                 killEnterBreak = 0
@@ -327,33 +404,57 @@ function run_ui(event)
         end
     -- normal page viewing
     elseif currentState <= pageStatus.display then
-        if event == userEvent.press.pageUp then
-            incPage(-1)
-        elseif event == userEvent.release.menu or event == userEvent.press.pageDown then
+        if event == userEvent.press.pageUp or event == userEvent.touch.slideRight then
+            if (currentPage == 1) then
+                return protocol.exitFunc();
+            else 
+                incPage(-1)
+            end
+        elseif event == userEvent.release.menu or event == userEvent.press.pageDown or event == userEvent.touch.slideLeft then
             incPage(1)
         elseif event == userEvent.release.plus or event == userEvent.repeatPress.plus or event == userEvent.dial.left then
             incLine(-1)
         elseif event == userEvent.release.minus or event == userEvent.repeatPress.minus or event == userEvent.dial.right then
             incLine(1)
+        elseif event == userEvent.touch.up then
+            local idx = getField(wParam, lParam)
+            local field = Page.fields[idx]
+            if (idx ~= -1) and Page.values and Page.values[idx] and (field.ro ~= true) then
+                currentLine = idx
+                currentState = pageStatus.editing
+                lcd.showKeyboard(KEYBOARD_NUM_INC_DEC)
+            end
         elseif event == userEvent.release.enter then
             local field = Page.fields[currentLine]
             local idx = field.i or currentLine
             if Page.values and Page.values[idx] and (field.ro ~= true) then
                 currentState = pageStatus.editing
+                lcd.showKeyboard(KEYBOARD_NUM_INC_DEC)
             end
         elseif event == userEvent.release.exit then
             return protocol.exitFunc();
         end
     -- editing value
     elseif currentState == pageStatus.editing then
-        if (event == userEvent.release.exit) or (event == userEvent.release.enter) then
+        if (event == userEvent.release.exit) or (event == userEvent.release.enter) or event == userEvent.touch.up or event == userEvent.touch.slideLeft or event == userEvent.touch.slideRight then
             currentState = pageStatus.display
-        elseif event == userEvent.press.plus or event == userEvent.repeatPress.plus or event == userEvent.dial.right then
+            lcd.showKeyboard(KEYBOARD_NONE)
+        elseif event == userEvent.press.plus or event == userEvent.repeatPress.plus or event == userEvent.dial.right or  event == userEvent.virtual.inc then
             incValue(1)
-        elseif event == userEvent.press.minus or event == userEvent.repeatPress.minus or event == userEvent.dial.left then
+        elseif event == userEvent.press.minus or event == userEvent.repeatPress.minus or event == userEvent.dial.left or  event == userEvent.virtual.dec then
             incValue(-1)
+        elseif  event == userEvent.virtual.incBig then
+            incValue(2)
+        elseif  event == userEvent.virtual.decBig then
+            incValue(-2)
+        elseif event == userEvent.virtual.min then
+            setValue(Page.fields[currentLine].min)
+        elseif event == userEvent.virtual.max then
+            setValue(Page.fields[currentLine].max)
         end
-    end
+    elseif currentState == pageStatus.close then
+        return protocol.exitFunc();
+	end
     local nextPage = currentPage
     while Page == nil do
         Page = assert(loadScript(radio.templateHome .. PageFiles[currentPage]))()

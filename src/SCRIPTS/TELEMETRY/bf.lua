@@ -16,7 +16,7 @@ local MENU_TIMESLICE = 100
 
 local lastMenuEvent = 0
 
-function run(event)
+function run(event, wParam, lParam)
   lastMenuEvent = getTime()
 
   run_ui(event)
