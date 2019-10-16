@@ -7,6 +7,7 @@ local pageStatus =
     saving      = 4,
     displayMenu = 5,
     close       = 6,
+    exit        = 7,
 }
 
 local uiMsp =
@@ -353,6 +354,9 @@ local function getMenuIndex(event_x, event_y)
 end
 
 function run_ui(event, wParam, lParam)
+    if currentState == pageStatus.close then
+        return 1
+    end
     local now = getTime()
     -- if lastRunTS old than 500ms
     if lastRunTS + 50 < now then
@@ -373,7 +377,7 @@ function run_ui(event, wParam, lParam)
     -- process send queue
     mspProcessTxQ()
     -- navigation
-    if (event == userEvent.longPress.menu) or (event == userEvent.touch.up and wParam < 30 and lParam < 30) then -- Taranis QX7 / X9
+    if (event == userEvent.longPress.menu) or (event == userEvent.touch.up and wParam < 50 and lParam < 50) then -- Taranis QX7 / X9
         menuActive = 1
         currentState = pageStatus.displayMenu
     elseif userEvent.press.pageDown and (event == userEvent.longPress.enter) then -- Horus
@@ -453,8 +457,9 @@ function run_ui(event, wParam, lParam)
             setValue(Page.fields[currentLine].max)
         end
     elseif currentState == pageStatus.close then
+        currentState = pageStatus.exit;
         return protocol.exitFunc();
-	end
+    end
     local nextPage = currentPage
     while Page == nil do
         Page = assert(loadScript(radio.templateHome .. PageFiles[currentPage]))()
