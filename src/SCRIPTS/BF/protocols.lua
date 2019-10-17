@@ -16,7 +16,7 @@ local supportedProtocols =
     {
         transport       = SCRIPT_HOME.."/MSP/crsf.lua",
         rssi            = function() return getValue("TQly") end,
-        exitFunc        = function() return "/CROSSFIRE/crossfire.lua" end,
+        exitFunc        = function() return 0 end,
         stateSensor     = "1RSS",
         push            = crossfireTelemetryPush,
         maxTxBufferSize = 8,
