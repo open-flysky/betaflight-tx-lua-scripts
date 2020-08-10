@@ -352,6 +352,12 @@ local function getMenuIndex(event_x, event_y)
     end
     return -1
 end
+local function close()
+    if not protocol then
+        return -2
+    end
+    return protocol.exitFunc()
+end
 
 function run_ui(event, wParam, lParam)
     if currentState == pageStatus.close then
@@ -410,7 +416,7 @@ function run_ui(event, wParam, lParam)
     elseif currentState <= pageStatus.display then
         if event == userEvent.press.pageUp or event == userEvent.touch.slideRight then
             if (currentPage == 1) then
-                return protocol.exitFunc();
+                return close()
             else 
                 incPage(-1)
             end
@@ -436,7 +442,7 @@ function run_ui(event, wParam, lParam)
                 lcd.showKeyboard(KEYBOARD_NUM_INC_DEC)
             end
         elseif event == userEvent.release.exit then
-            return protocol.exitFunc();
+            return close()
         end
     -- editing value
     elseif currentState == pageStatus.editing then
@@ -458,7 +464,7 @@ function run_ui(event, wParam, lParam)
         end
     elseif currentState == pageStatus.close then
         currentState = pageStatus.exit;
-        return protocol.exitFunc();
+        return close()
     end
     local nextPage = currentPage
     while Page == nil do
